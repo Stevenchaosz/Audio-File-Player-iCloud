@@ -82,7 +82,7 @@ struct PlayerView: View {
             )
             .ignoresSafeArea()
 
-            // Ambient blobs for liquid glass feel
+            // Ambient blobs for depth and translucency
             Circle()
                 .fill(Color.purple.opacity(0.55))
                 .frame(width: 350)
