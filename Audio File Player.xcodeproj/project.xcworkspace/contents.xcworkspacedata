@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Workspace
+   version = "1.0">
+   <FileRef
+      location = "self:">
+   </FileRef>
+   <FileRef
+      location = "group:AppIconDesign.swift">
+   </FileRef>
+   <FileRef
+      location = "group:SpeechTranscriptionManager.swift">
+   </FileRef>
+   <FileRef
+      location = "group:PrivacyInfo.md">
+   </FileRef>
+   <FileRef
+      location = "group:AppIconInstructions.md">
+   </FileRef>
+   <FileRef
+      location = "group:SUMMARY.md">
+   </FileRef>
+</Workspace>
