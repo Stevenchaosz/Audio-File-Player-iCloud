@@ -3,7 +3,7 @@ import AVFoundation
 import Combine
 import MediaPlayer
 
-final class AudioPlayerManager: ObservableObject {
+final class AudioPlayerManager: ObservableObject, @unchecked Sendable {
     @Published var currentFile: AudioFile?
     @Published var isPlaying = false
     @Published var currentTime: TimeInterval = 0
