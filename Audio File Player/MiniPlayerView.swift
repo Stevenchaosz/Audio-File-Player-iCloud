@@ -15,21 +15,35 @@ struct MiniPlayerView: View {
                     Text(player.currentFile?.displayName ?? "")
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                    Text(formatTime(player.currentTime) + " / " + (player.currentFile?.formattedDuration ?? ""))
+                    if player.isDownloading {
+                        HStack(spacing: 4) {
+                            Image(systemName: "icloud.and.arrow.down")
+                            Text("Downloading…")
+                        }
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                        .monospacedDigit()
+                    } else {
+                        Text(formatTime(player.currentTime) + " / " + (player.currentFile?.formattedDuration ?? ""))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
                 }
 
                 Spacer()
 
                 HStack(spacing: 20) {
-                    Button {
-                        player.togglePlayPause()
-                    } label: {
-                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.title3.weight(.semibold))
+                    if player.isDownloading {
+                        ProgressView()
                             .frame(width: 28, height: 28)
+                    } else {
+                        Button {
+                            player.togglePlayPause()
+                        } label: {
+                            Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                                .font(.title3.weight(.semibold))
+                                .frame(width: 28, height: 28)
+                        }
                     }
 
                     Button {
@@ -39,6 +53,7 @@ struct MiniPlayerView: View {
                             .font(.title3)
                             .frame(width: 28, height: 28)
                     }
+                    .disabled(player.isDownloading)
                 }
                 .foregroundStyle(.primary)
             }

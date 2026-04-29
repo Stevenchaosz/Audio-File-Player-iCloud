@@ -85,8 +85,19 @@ final class AudioLibraryManager {
         saveToStorage()
     }
 
+    func remove(ids: [UUID]) {
+        audioFiles.removeAll { ids.contains($0.id) }
+        saveToStorage()
+    }
+
     func move(from source: IndexSet, to destination: Int) {
         audioFiles.move(fromOffsets: source, toOffset: destination)
+        saveToStorage()
+    }
+
+    func updateLastPlayed(id: UUID) {
+        guard let idx = audioFiles.firstIndex(where: { $0.id == id }) else { return }
+        audioFiles[idx].lastPlayedDate = Date()
         saveToStorage()
     }
 

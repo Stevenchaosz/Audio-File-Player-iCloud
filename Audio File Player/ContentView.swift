@@ -1,10 +1,46 @@
 import SwiftUI
+import UniformTypeIdentifiers
+
+enum LibrarySortField: String, CaseIterable {
+    case name           = "Name"
+    case dateLastOpened = "Date Last Opened"
+    case dateAdded      = "Date Added"
+    case duration       = "Duration"
+}
+
+enum LibraryViewStyle: String {
+    case list, icons
+}
 
 struct ContentView: View {
     @Environment(AudioLibraryManager.self) private var library
     @EnvironmentObject private var player: AudioPlayerManager
+
     @State private var showingPicker = false
     @State private var showingPlayer = false
+    @State private var editMode: EditMode = .inactive
+    @State private var selectedIDs: Set<UUID> = []
+
+    @AppStorage("sortField") private var sortField: LibrarySortField = .name
+    @AppStorage("sortAscending") private var sortAscending: Bool = true
+    @AppStorage("viewStyle") private var viewStyle: LibraryViewStyle = .list
+
+    private var sortedFiles: [AudioFile] {
+        library.audioFiles.sorted { a, b in
+            let aFirst: Bool
+            switch sortField {
+            case .name:
+                aFirst = a.displayName.localizedStandardCompare(b.displayName) == .orderedAscending
+            case .dateLastOpened:
+                aFirst = (a.lastPlayedDate ?? .distantPast) < (b.lastPlayedDate ?? .distantPast)
+            case .dateAdded:
+                aFirst = a.dateAdded < b.dateAdded
+            case .duration:
+                aFirst = a.duration < b.duration
+            }
+            return sortAscending ? aFirst : !aFirst
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -12,8 +48,10 @@ struct ContentView: View {
                 Group {
                     if library.audioFiles.isEmpty {
                         emptyState
-                    } else {
+                    } else if viewStyle == .list {
                         fileList
+                    } else {
+                        iconGrid
                     }
                 }
 
@@ -25,51 +63,133 @@ struct ContentView: View {
                 }
             }
             .animation(.spring(duration: 0.35), value: player.currentFile?.id)
-            .navigationTitle("Library")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingPicker = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .fontWeight(.semibold)
-                    }
-                }
-                
-                if !library.audioFiles.isEmpty {
-                    ToolbarItem(placement: .topBarLeading) {
-                        EditButton()
-                    }
-                }
-            }
+            .navigationTitle(
+                editMode == .active
+                    ? (selectedIDs.isEmpty ? "Select Items" : "\(selectedIDs.count) Selected")
+                    : "Library"
+            )
+            .toolbar { toolbarContent }
+            .environment(\.editMode, $editMode)
         }
-        .sheet(isPresented: $showingPicker) {
-            DocumentPickerView { urls in
-                library.importURLs(urls)
-            }
-            .ignoresSafeArea()
+        .fileImporter(
+            isPresented: $showingPicker,
+            allowedContentTypes: [.audio, .folder],
+            allowsMultipleSelection: true
+        ) { result in
+            guard case .success(let urls) = result else { return }
+            library.importURLs(urls)
         }
         .fullScreenCover(isPresented: $showingPlayer) {
             PlayerView()
         }
+        .onAppear {
+            player.onLoad = { id in library.updateLastPlayed(id: id) }
+        }
     }
 
-    private var fileList: some View {
-        List {
-            ForEach(Array(library.audioFiles.enumerated()), id: \.element.id) { index, file in
-                AudioFileRow(
-                    file: file,
-                    isCurrentTrack: player.currentIndex == index,
-                    isPlaying: player.currentIndex == index && player.isPlaying
-                )
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    player.load(file: file, index: index)
-                    showingPlayer = true
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        if editMode == .active {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Cancel") {
+                    withAnimation { editMode = .inactive; selectedIDs.removeAll() }
                 }
             }
-            .onDelete { offsets in library.remove(at: offsets) }
-            .onMove { source, dest in library.move(from: source, to: dest) }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(role: .destructive) {
+                    library.remove(ids: Array(selectedIDs))
+                    withAnimation { editMode = .inactive; selectedIDs.removeAll() }
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .disabled(selectedIDs.isEmpty)
+            }
+        } else {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                ellipsisMenu
+                Button {
+                    showingPicker = true
+                } label: {
+                    Image(systemName: "plus").fontWeight(.semibold)
+                }
+            }
+        }
+    }
+
+    // MARK: - Ellipsis Menu
+
+    private var ellipsisMenu: some View {
+        Menu {
+            // Select
+            Button {
+                withAnimation { editMode = .active }
+            } label: {
+                Label("Select", systemImage: "checkmark.circle")
+            }
+
+            // View style toggle
+            Button {
+                withAnimation { viewStyle = viewStyle == .list ? .icons : .list }
+            } label: {
+                if viewStyle == .list {
+                    Label("Icons", systemImage: "square.grid.2x2")
+                } else {
+                    Label("List", systemImage: "list.bullet")
+                }
+            }
+
+            Divider()
+
+            // Sort options
+            ForEach(LibrarySortField.allCases, id: \.self) { field in
+                Button {
+                    if sortField == field {
+                        sortAscending.toggle()
+                    } else {
+                        sortField = field
+                        sortAscending = true
+                    }
+                } label: {
+                    if sortField == field {
+                        Label(field.rawValue, systemImage: sortAscending ? "chevron.up" : "chevron.down")
+                    } else {
+                        Text(field.rawValue)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .fontWeight(.semibold)
+        }
+    }
+
+    // MARK: - List View
+
+    private var fileList: some View {
+        List(selection: $selectedIDs) {
+            ForEach(sortedFiles) { file in
+                let isCurrentTrack = player.currentFile?.id == file.id
+                AudioFileRow(
+                    file: file,
+                    isCurrentTrack: isCurrentTrack,
+                    isPlaying: isCurrentTrack && player.isPlaying
+                )
+                .tag(file.id)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard editMode != .active else { return }
+                    if let index = library.audioFiles.firstIndex(where: { $0.id == file.id }) {
+                        player.load(file: file, index: index)
+                        showingPlayer = true
+                    }
+                }
+            }
+            .onDelete { offsets in
+                let ids = offsets.map { sortedFiles[$0].id }
+                library.remove(ids: ids)
+            }
 
             if player.currentFile != nil {
                 Color.clear.frame(height: 80)
@@ -79,6 +199,48 @@ struct ContentView: View {
         }
         .listStyle(.insetGrouped)
     }
+
+    // MARK: - Icon Grid View
+
+    private var iconGrid: some View {
+        ScrollView {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 100, maximum: 130), spacing: 16)],
+                spacing: 20
+            ) {
+                ForEach(sortedFiles) { file in
+                    let isCurrentTrack = player.currentFile?.id == file.id
+                    AudioFileIcon(
+                        file: file,
+                        isCurrentTrack: isCurrentTrack,
+                        isPlaying: isCurrentTrack && player.isPlaying,
+                        isSelected: selectedIDs.contains(file.id)
+                    )
+                    .onTapGesture {
+                        if editMode == .active {
+                            if selectedIDs.contains(file.id) {
+                                selectedIDs.remove(file.id)
+                            } else {
+                                selectedIDs.insert(file.id)
+                            }
+                        } else {
+                            if let index = library.audioFiles.firstIndex(where: { $0.id == file.id }) {
+                                player.load(file: file, index: index)
+                                showingPlayer = true
+                            }
+                        }
+                    }
+                }
+
+                if player.currentFile != nil {
+                    Color.clear.frame(height: 80)
+                }
+            }
+            .padding()
+        }
+    }
+
+    // MARK: - Empty State
 
     private var emptyState: some View {
         VStack(spacing: 16) {
@@ -91,31 +253,16 @@ struct ContentView: View {
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .font(.subheadline)
-            
-            VStack(spacing: 12) {
-                // Use the normal file picker
-                Button {
-                    showingPicker = true
-                } label: {
-                    Label("Import Files (Recommended)", systemImage: "folder.badge.plus")
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(Color.blue.gradient)
-                        .foregroundStyle(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-                
-                Text("Or copy this command to Terminal:")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 8)
-                
-                Text("xcrun simctl addmedia booted ~/Downloads/edito_b1_livre_de_leleve_audio/*.mp3")
-                    .font(.system(.caption, design: .monospaced))
-                    .padding(8)
-                    .background(Color.secondary.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .textSelection(.enabled)
+
+            Button {
+                showingPicker = true
+            } label: {
+                Label("Import Files", systemImage: "folder.badge.plus")
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.blue.gradient)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             .padding(.horizontal)
             .padding(.top)
@@ -123,6 +270,8 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+
+// MARK: - List Row
 
 struct AudioFileRow: View {
     let file: AudioFile
@@ -160,5 +309,41 @@ struct AudioFileRow: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+// MARK: - Icon Cell
+
+struct AudioFileIcon: View {
+    let file: AudioFile
+    let isCurrentTrack: Bool
+    let isPlaying: Bool
+    let isSelected: Bool
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ZStack(alignment: .topTrailing) {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(isCurrentTrack ? Color.blue.gradient : Color.secondary.opacity(0.15).gradient)
+                    .aspectRatio(1, contentMode: .fit)
+                Image(systemName: isPlaying ? "waveform" : "music.note")
+                    .font(.system(size: 32, weight: .medium))
+                    .foregroundStyle(isCurrentTrack ? .white : .secondary)
+                    .symbolEffect(.variableColor.iterative, isActive: isPlaying)
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(.white, Color.blue)
+                        .padding(6)
+                }
+            }
+
+            Text(file.displayName)
+                .font(.caption)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(isCurrentTrack ? Color.blue : .primary)
+        }
     }
 }

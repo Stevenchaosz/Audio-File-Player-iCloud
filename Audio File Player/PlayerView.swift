@@ -242,11 +242,26 @@ struct PlayerView: View {
                         .strokeBorder(.white.opacity(0.2), lineWidth: 1)
                 }
 
-            Image(systemName: player.isPlaying ? "waveform" : "music.note")
-                .font(.system(size: 88, weight: .ultraLight))
-                .foregroundStyle(.white.opacity(0.85))
-                .symbolEffect(.variableColor.iterative.reversing, isActive: player.isPlaying)
-                .contentTransition(.symbolEffect(.replace))
+            if player.isDownloading {
+                VStack(spacing: 18) {
+                    Image(systemName: "icloud.and.arrow.down")
+                        .font(.system(size: 64, weight: .ultraLight))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .symbolEffect(.variableColor.iterative.reversing, isActive: true)
+                    ProgressView()
+                        .scaleEffect(1.3)
+                        .tint(.white)
+                    Text("Downloading from iCloud…")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+            } else {
+                Image(systemName: player.isPlaying ? "waveform" : "music.note")
+                    .font(.system(size: 88, weight: .ultraLight))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .symbolEffect(.variableColor.iterative.reversing, isActive: player.isPlaying)
+                    .contentTransition(.symbolEffect(.replace))
+            }
         }
         .aspectRatio(1, contentMode: .fit)
         .scaleEffect(artworkScale)
@@ -517,14 +532,19 @@ struct PlayerView: View {
                     .fill(.white)
                     .frame(width: 56, height: 56)
                     .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(.black)
-                    .offset(x: player.isPlaying ? 0 : 2)
-                    .contentTransition(.symbolEffect(.replace))
+                if player.isDownloading {
+                    ProgressView().tint(.black)
+                } else {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(.black)
+                        .offset(x: player.isPlaying ? 0 : 2)
+                        .contentTransition(.symbolEffect(.replace))
+                }
             }
         }
         .buttonStyle(.plain)
+        .disabled(player.isDownloading)
     }
 
     // MARK: - Speed Menu (popup picker)
@@ -535,7 +555,11 @@ struct PlayerView: View {
                 Button {
                     withAnimation(.spring(duration: 0.25)) { player.setSpeed(speed) }
                 } label: {
-                    Label(labelFor(speed), systemImage: player.playbackSpeed == speed ? "checkmark" : "")
+                    if player.playbackSpeed == speed {
+                        Label(labelFor(speed), systemImage: "checkmark")
+                    } else {
+                        Text(labelFor(speed))
+                    }
                 }
             }
         } label: {
@@ -605,14 +629,19 @@ struct PlayerView: View {
                     .fill(.white)
                     .frame(width: 76, height: 76)
                     .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundStyle(.black)
-                    .offset(x: player.isPlaying ? 0 : 2)
-                    .contentTransition(.symbolEffect(.replace))
+                if player.isDownloading {
+                    ProgressView().tint(.black)
+                } else {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 32, weight: .bold))
+                        .foregroundStyle(.black)
+                        .offset(x: player.isPlaying ? 0 : 2)
+                        .contentTransition(.symbolEffect(.replace))
+                }
             }
         }
         .buttonStyle(.plain)
+        .disabled(player.isDownloading)
     }
 
     // MARK: - Helpers

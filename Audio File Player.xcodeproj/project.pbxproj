@@ -17,7 +17,6 @@
 		B10000000000000000000005 /* AudioPlayerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000005 /* AudioPlayerManager.swift */; };
 		B10000000000000000000006 /* AudioLibraryManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000006 /* AudioLibraryManager.swift */; };
 		B10000000000000000000007 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000007 /* Models.swift */; };
-		B10000000000000000000008 /* DocumentPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000008 /* DocumentPickerView.swift */; };
 		B10000000000000000000009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000009 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -34,7 +33,6 @@
 		F10000000000000000000005 /* AudioPlayerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerManager.swift; sourceTree = "<group>"; };
 		F10000000000000000000006 /* AudioLibraryManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioLibraryManager.swift; sourceTree = "<group>"; };
 		F10000000000000000000007 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
-		F10000000000000000000008 /* DocumentPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentPickerView.swift; sourceTree = "<group>"; };
 		F10000000000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F1000000000000000000000A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F1000000000000000000000B /* Audio File Player.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Audio File Player.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -79,7 +77,6 @@
 				F10000000000000000000005 /* AudioPlayerManager.swift */,
 				F10000000000000000000006 /* AudioLibraryManager.swift */,
 				F10000000000000000000007 /* Models.swift */,
-				F10000000000000000000008 /* DocumentPickerView.swift */,
 				F10000000000000000000009 /* Assets.xcassets */,
 				F1000000000000000000000A /* Info.plist */,
 				B01708932FA0588900046505 /* SpeechTranscriptionManager.swift */,
@@ -168,7 +165,6 @@
 				B10000000000000000000007 /* Models.swift in Sources */,
 				B01708942FA0588900046505 /* SpeechTranscriptionManager.swift in Sources */,
 				B01708962FA058A900046505 /* IconGeneratorApp.swift in Sources */,
-				B10000000000000000000008 /* DocumentPickerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -10,10 +10,12 @@ final class AudioPlayerManager: ObservableObject, @unchecked Sendable {
     @Published var duration: TimeInterval = 0
     @Published var playbackSpeed: Float = 1.0
     @Published var currentIndex: Int = -1
+    @Published var isDownloading = false
 
     var onTrackEnd: (() -> Void)?
     var onNext: (() -> Void)?
     var onPrevious: (() -> Void)?
+    var onLoad: ((UUID) -> Void)?
     let speedOptions: [Float] = [0.25, 0.5, 1.0, 1.5, 2.0]
 
     private var player: AVPlayer?
@@ -30,11 +32,73 @@ final class AudioPlayerManager: ObservableObject, @unchecked Sendable {
         }
 
         cleanup()
-
         securityScopedURL?.stopAccessingSecurityScopedResource()
         let accessing = url.startAccessingSecurityScopedResource()
         securityScopedURL = accessing ? url : nil
 
+        // Update visible state immediately so the UI shows the right track
+        currentFile = file
+        currentIndex = index
+        currentTime = 0
+        duration = 0
+        let loadedID = file.id
+        Task { @MainActor [weak self] in self?.onLoad?(loadedID) }
+
+        // iCloud files that haven't been downloaded yet have status .notDownloaded.
+        // Trying to play them directly fails with "operation could not be completed".
+        // Trigger a download first and wait for it before handing off to AVPlayer.
+        let downloadStatus = (try? url.resourceValues(
+            forKeys: [.ubiquitousItemDownloadingStatusKey]
+        ))?.ubiquitousItemDownloadingStatus
+
+        if downloadStatus == .notDownloaded {
+            isPlaying = false
+            isDownloading = true
+            let fileID = file.id
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try FileManager.default.startDownloadingUbiquitousItem(at: url)
+                } catch {
+                    print("⚠️ Could not start iCloud download: \(error)")
+                    self.isDownloading = false
+                    return
+                }
+
+                var downloaded = false
+                let deadline = Date().addingTimeInterval(300) // 5-minute ceiling
+                while Date() < deadline {
+                    let values = try? url.resourceValues(
+                        forKeys: [.ubiquitousItemDownloadingStatusKey]
+                    )
+                    if values?.ubiquitousItemDownloadingStatus != .notDownloaded {
+                        downloaded = true
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    // Abort if the user switched to a different track while we waited
+                    guard self.currentFile?.id == fileID else { return }
+                }
+
+                guard self.currentFile?.id == fileID else { return }
+                self.isDownloading = false
+
+                if downloaded {
+                    self.startPlayback(url: url, file: file, index: index)
+                } else {
+                    print("⚠️ iCloud download timed out for: \(file.name)")
+                }
+            }
+            return
+        }
+
+        isDownloading = false
+        startPlayback(url: url, file: file, index: index)
+    }
+
+    // MARK: - Internal playback start (called once the file is locally available)
+
+    private func startPlayback(url: URL, file: AudioFile, index: Int) {
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
             try AVAudioSession.sharedInstance().setActive(true)
@@ -52,10 +116,6 @@ final class AudioPlayerManager: ObservableObject, @unchecked Sendable {
             player?.replaceCurrentItem(with: item)
         }
 
-        currentFile = file
-        currentIndex = index
-        currentTime = 0
-        duration = 0
         isPlaying = true
 
         setupNowPlaying(file: file)
@@ -137,7 +197,7 @@ final class AudioPlayerManager: ObservableObject, @unchecked Sendable {
     // MARK: - Lock Screen / Now Playing
 
     private func setupNowPlaying(file: AudioFile) {
-        var info: [String: Any] = [
+        let info: [String: Any] = [
             MPMediaItemPropertyTitle: file.displayName,
             MPMediaItemPropertyArtist: "Audio File Player",
             MPNowPlayingInfoPropertyElapsedPlaybackTime: 0,
