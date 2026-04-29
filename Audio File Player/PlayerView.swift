@@ -49,6 +49,7 @@ struct PlayerView: View {
                         .padding(.bottom, 32)
                         .transition(.move(edge: .top).combined(with: .opacity))
                     Spacer(minLength: 0)
+                    
                 }
 
                 controlsPanel
@@ -131,41 +132,42 @@ struct PlayerView: View {
 
     private var mosaicBackground: some View {
         ZStack {
-            Color.black
+            // Deep purple base — not black, so blobs read against it
+            Color(hue: 0.73, saturation: 0.60, brightness: 0.18)
 
-            // Large blurred blobs — heavily overlapping to create a paint-wash effect
+            // Bright, large blobs — paint-wash effect
             Circle()
-                .fill(Color(hue: 0.78, saturation: 0.95, brightness: 0.70))
-                .frame(width: 420)
-                .blur(radius: 110)
-                .offset(x: -60, y: -320)
+                .fill(Color(hue: 0.80, saturation: 1.00, brightness: 0.92))
+                .frame(width: 520)
+                .blur(radius: 130)
+                .offset(x: -70, y: -310)
 
             Circle()
-                .fill(Color(hue: 0.64, saturation: 0.85, brightness: 0.65))
+                .fill(Color(hue: 0.63, saturation: 0.90, brightness: 0.88))
+                .frame(width: 480)
+                .blur(radius: 120)
+                .offset(x: 150, y: -90)
+
+            Circle()
+                .fill(Color(hue: 0.87, saturation: 0.88, brightness: 0.82))
+                .frame(width: 440)
+                .blur(radius: 115)
+                .offset(x: -110, y: 160)
+
+            Circle()
+                .fill(Color(hue: 0.70, saturation: 0.85, brightness: 0.80))
+                .frame(width: 510)
+                .blur(radius: 125)
+                .offset(x: 120, y: 370)
+
+            Circle()
+                .fill(Color(hue: 0.75, saturation: 0.95, brightness: 0.75))
                 .frame(width: 380)
                 .blur(radius: 100)
-                .offset(x: 130, y: -120)
+                .offset(x: -20, y: 560)
 
-            Circle()
-                .fill(Color(hue: 0.85, saturation: 0.80, brightness: 0.60))
-                .frame(width: 350)
-                .blur(radius: 90)
-                .offset(x: -100, y: 100)
-
-            Circle()
-                .fill(Color(hue: 0.70, saturation: 0.90, brightness: 0.55))
-                .frame(width: 400)
-                .blur(radius: 105)
-                .offset(x: 90, y: 280)
-
-            Circle()
-                .fill(Color(hue: 0.82, saturation: 0.75, brightness: 0.50))
-                .frame(width: 300)
-                .blur(radius: 80)
-                .offset(x: -30, y: 480)
-
-            // Dark overlay so text stays readable
-            Color.black.opacity(0.52)
+            // Light overlay — just enough for text contrast, not enough to kill the color
+            Color.black.opacity(0.28)
         }
     }
 
@@ -240,33 +242,22 @@ struct PlayerView: View {
                 emptyTranscriptPlaceholder
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView(.vertical, showsIndicators: false) {
-                        Text(displayText)
-                            .font(.title2.weight(.medium))
-                            .foregroundStyle(.white)
-                            .multilineTextAlignment(.leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 28)
-                            .padding(.top, 8)
-                            .padding(.bottom, 100)
-                            // Suppress ALL animations on text changes — prevents flash
-                            .transaction { $0.animation = nil }
-
-                        Color.clear.frame(height: 1).id("scrollAnchor")
-                    }
-                    .onChange(of: transcriptionManager.transcript) {
-                        // Scroll without animation to avoid the jump-flash
-                        var t = Transaction()
-                        t.disablesAnimations = true
-                        withTransaction(t) {
-                            proxy.scrollTo("scrollAnchor", anchor: .bottom)
-                        }
-                    }
-                    .onChange(of: showingTranslation) {
-                        proxy.scrollTo("scrollAnchor", anchor: .top)
-                    }
+                ScrollView(.vertical, showsIndicators: false) {
+                    Text(displayText)
+                        .font(.title2.weight(.medium))
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 28)
+                        .padding(.top, 8)
+                        .padding(.bottom, 100)
+                        // Kill every implicit animation on text changes — stops the flash
+                        .transaction { $0.animation = nil }
                 }
+                // Pins the scroll viewport to the bottom as content grows.
+                // Eliminates the onChange+scrollTo pattern that caused the
+                // "multiple updates per frame" warning during rapid transcription.
+                .defaultScrollAnchor(.bottom)
             }
 
             // Floating action bar — fade bottom edge, sit action buttons over it
