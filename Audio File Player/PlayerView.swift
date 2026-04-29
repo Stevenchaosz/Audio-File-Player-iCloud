@@ -143,7 +143,7 @@ struct PlayerView: View {
         }
     }
 
-    // MARK: - Full-screen mosaic (Apple Music lyrics background style)
+    // MARK: - Full-screen mosaic (liquid glass lyrics background)
 
     private var mosaicBackground: some View {
         ZStack {
@@ -272,11 +272,11 @@ struct PlayerView: View {
         .shadow(color: .black.opacity(0.5), radius: 40, y: 16)
     }
 
-    // MARK: - Transcript Content (full-height, Apple Music lyrics style)
+    // MARK: - Transcript Content (full-height, liquid glass lyrics view)
 
     private var transcriptContent: some View {
         VStack(spacing: 0) {
-            // Track header — mirroring Apple Music's compact header inside the lyrics view
+            // Track header — compact header anchored above the lyrics scroll area
             HStack(spacing: 12) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)

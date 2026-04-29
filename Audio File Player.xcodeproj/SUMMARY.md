@@ -66,7 +66,7 @@ Now the speed badge in the top-right corner will correctly show:
 ### Features Added:
 
 #### A. Transcript Button
-- Added a **transcript button** in the player view navigation bar (like Apple Music's lyrics button)
+- Added a **transcript button** in the player view navigation bar to toggle the lyrics view
 - Icon: Quote symbol (`text.quote`)
 - Toggles between artwork view and transcript view
 
@@ -164,7 +164,7 @@ See `PrivacyInfo.md` for detailed instructions.
 
 ## Next Steps (Optional Enhancements):
 
-1. **Timestamp Sync:** Add word-level timestamps to sync transcript with audio playback (like Apple Music lyrics)
+1. **Timestamp Sync:** Add word-level timestamps to sync transcript with audio playback, displayed as scrolling lyrics following the liquid glass design language
 2. **Transcript Storage:** Save transcripts to avoid re-transcribing
 3. **Multiple Languages:** Support language detection or manual selection
 4. **Export Transcript:** Allow users to share/copy transcript text
