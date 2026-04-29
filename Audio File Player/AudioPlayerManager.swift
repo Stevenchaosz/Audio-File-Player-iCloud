@@ -173,52 +173,53 @@ final class AudioPlayerManager: ObservableObject, @unchecked Sendable {
 
         center.playCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
-            DispatchQueue.main.async { self?.togglePlayPause() }
+            DispatchQueue.main.async { @Sendable [self] in self?.togglePlayPause() }
             return .success
         }
 
         center.pauseCommand.isEnabled = true
         center.pauseCommand.addTarget { [weak self] _ in
-            DispatchQueue.main.async { self?.togglePlayPause() }
+            DispatchQueue.main.async { @Sendable [self] in self?.togglePlayPause() }
             return .success
         }
 
         center.togglePlayPauseCommand.isEnabled = true
         center.togglePlayPauseCommand.addTarget { [weak self] _ in
-            DispatchQueue.main.async { self?.togglePlayPause() }
+            DispatchQueue.main.async { @Sendable [self] in self?.togglePlayPause() }
             return .success
         }
 
         center.skipForwardCommand.isEnabled = true
         center.skipForwardCommand.preferredIntervals = [15]
         center.skipForwardCommand.addTarget { [weak self] _ in
-            DispatchQueue.main.async { self?.skip(15) }
+            DispatchQueue.main.async { @Sendable [self] in self?.skip(15) }
             return .success
         }
 
         center.skipBackwardCommand.isEnabled = true
         center.skipBackwardCommand.preferredIntervals = [15]
         center.skipBackwardCommand.addTarget { [weak self] _ in
-            DispatchQueue.main.async { self?.skip(-15) }
+            DispatchQueue.main.async { @Sendable [self] in self?.skip(-15) }
             return .success
         }
 
         center.changePlaybackPositionCommand.isEnabled = true
         center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let e = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            DispatchQueue.main.async { self?.seek(to: e.positionTime) }
+            let position = e.positionTime
+            DispatchQueue.main.async { @Sendable [self, position] in self?.seek(to: position) }
             return .success
         }
 
         center.nextTrackCommand.isEnabled = true
         center.nextTrackCommand.addTarget { [weak self] _ in
-            DispatchQueue.main.async { self?.onNext?() }
+            DispatchQueue.main.async { @Sendable [self] in self?.onNext?() }
             return .success
         }
 
         center.previousTrackCommand.isEnabled = true
         center.previousTrackCommand.addTarget { [weak self] _ in
-            DispatchQueue.main.async { self?.onPrevious?() }
+            DispatchQueue.main.async { @Sendable [self] in self?.onPrevious?() }
             return .success
         }
     }
