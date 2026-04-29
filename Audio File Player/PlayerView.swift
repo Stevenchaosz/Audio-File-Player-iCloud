@@ -76,7 +76,7 @@ struct PlayerView: View {
                 let requests = lines.map {
                     TranslationSession.Request(sourceText: $0.text, clientIdentifier: $0.id.uuidString)
                 }
-                let responses = try await session.translate(batch: requests)
+                let responses = session.translate(batch: requests)
                 var result: [UUID: String] = [:]
                 for try await response in responses {
                     if let raw = response.clientIdentifier, let uuid = UUID(uuidString: raw) {
@@ -88,7 +88,6 @@ struct PlayerView: View {
                 print("Translation error: \(error)")
             }
             isTranslating = false
-            translationConfig = nil
         }
         .onAppear {
             player.onTrackEnd = { playNext() }
