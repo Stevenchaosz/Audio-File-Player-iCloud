@@ -134,30 +134,19 @@ final class SpeechTranscriptionManager {
 // MARK: - TranscriptLine initializer from SpeechTranscriber.Result
 
 private extension TranscriptLine {
-    // Builds a TranscriptLine from a phrase result, extracting the overall
-    // start/end time from the TimeRangeAttribute runs on the AttributedString.
+    // Builds a TranscriptLine from a phrase result.
+    // result.range is a CMTimeRange directly on the Result — the phrase's
+    // start and end time in the source audio. No attribute iteration needed.
     init?(from result: SpeechTranscriber.Result) {
         let text = String(result.text.characters)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
 
-        var phraseStart: Double? = nil
-        var phraseEnd: Double = 0
-
-        for run in result.text.runs {
-            if let tr = run[SpeechTranscriber.Result.TimeRangeAttribute.self] {
-                let s = CMTimeGetSeconds(tr.start)
-                let e = CMTimeGetSeconds(CMTimeAdd(tr.start, tr.duration))
-                if phraseStart == nil || s < phraseStart! { phraseStart = s }
-                if e > phraseEnd { phraseEnd = e }
-            }
-        }
-
         self.init(
             id: UUID(),
             text: text,
-            startTime: phraseStart ?? 0,
-            endTime: phraseEnd
+            startTime: CMTimeGetSeconds(result.range.start),
+            endTime: CMTimeGetSeconds(result.range.end)
         )
     }
 }
