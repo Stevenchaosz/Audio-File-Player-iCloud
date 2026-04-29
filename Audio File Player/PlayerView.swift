@@ -14,7 +14,7 @@ struct PlayerView: View {
     @State private var showingTranscript = false
 
     @State private var showingTranslation = false
-    @State private var translatedText: String = ""
+    @State private var lineTranslations: [UUID: String] = [:]
     @State private var isTranslating = false
     @State private var translationConfig: TranslationSession.Configuration?
 
@@ -69,18 +69,26 @@ struct PlayerView: View {
         // Capture text before the async boundary; reset config to nil after so
         // the next tap can re-trigger by setting it to a new value again.
         .translationTask(translationConfig) { session in
-            let textToTranslate = transcriptionManager.transcript
-            guard !textToTranslate.isEmpty else { return }
+            let lines = transcriptionManager.lines
+            guard !lines.isEmpty else { return }
             isTranslating = true
             do {
-                let response = try await session.translate(textToTranslate)
-                translatedText = response.targetText.isEmpty ? "Translation unavailable" : response.targetText
+                let requests = lines.map {
+                    TranslationSession.Request(sourceText: $0.text, clientIdentifier: $0.id.uuidString)
+                }
+                let responses = try await session.translate(batch: requests)
+                var result: [UUID: String] = [:]
+                for response in responses {
+                    if let raw = response.clientIdentifier, let uuid = UUID(uuidString: raw) {
+                        result[uuid] = response.targetText
+                    }
+                }
+                lineTranslations = result
             } catch {
                 print("Translation error: \(error)")
-                translatedText = "Translation unavailable"
             }
             isTranslating = false
-            translationConfig = nil  // Nil-out so setting it again next time re-fires the task
+            translationConfig = nil
         }
         .onAppear {
             player.onTrackEnd = { playNext() }
@@ -97,7 +105,7 @@ struct PlayerView: View {
             transcriptionManager.clearTranscript()
             showingTranscript = false
             showingTranslation = false
-            translatedText = ""
+            lineTranslations = [:]
             translationConfig = nil
         }
         .onChange(of: player.isPlaying) { _, playing in
@@ -363,22 +371,10 @@ struct PlayerView: View {
                     .padding(.horizontal, 24)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                } else if showingTranslation {
-                    // Translation: plain scrollable text (no timestamp sync)
-                    ScrollView(.vertical, showsIndicators: false) {
-                        Text(isTranslating ? "Translating…" : translatedText)
-                            .font(.title2.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 12)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
                 } else {
-                    // Lyrics-style view: lines highlight and scroll with playback
+                    // Lyrics-style view: lines highlight and scroll with playback.
+                    // When showingTranslation is true, each line renders its
+                    // per-line translation directly beneath the original text.
                     lyricsView
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -391,7 +387,7 @@ struct PlayerView: View {
                         if showingTranslation {
                             showingTranslation = false
                         } else {
-                            if translatedText.isEmpty {
+                            if lineTranslations.isEmpty {
                                 translationConfig = TranslationSession.Configuration(
                                     source: Locale.Language(identifier: "fr"),
                                     target: Locale.Language(identifier: "en")
@@ -421,7 +417,7 @@ struct PlayerView: View {
                     Button {
                         transcriptionManager.clearTranscript()
                         showingTranslation = false
-                        translatedText = ""
+                        lineTranslations = [:]
                         translationConfig = nil
                     } label: {
                         Image(systemName: "arrow.counterclockwise")
@@ -465,20 +461,32 @@ struct PlayerView: View {
 
     @ViewBuilder
     private func lyricsLine(_ line: TranscriptLine) -> some View {
-        let isCurrent = line.id == currentLineID
-        let isPast    = !isCurrent && line.endTime < player.currentTime
+        let isCurrent  = line.id == currentLineID
+        let isPast     = !isCurrent && line.endTime < player.currentTime
+        let baseOpacity: Double = isCurrent ? 1.0 : isPast ? 0.25 : 0.5
 
-        Text(line.text)
-            .font(isCurrent ? .title2.weight(.bold) : .title3.weight(.regular))
-            .foregroundStyle(
-                isCurrent ? .white :
-                isPast    ? .white.opacity(0.25) :
-                            .white.opacity(0.5)
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .scaleEffect(isCurrent ? 1.0 : 0.96, anchor: .leading)
-            .animation(.spring(duration: 0.35), value: isCurrent)
+        VStack(alignment: .leading, spacing: 5) {
+            Text(line.text)
+                .font(isCurrent ? .title2.weight(.bold) : .title3.weight(.regular))
+                .foregroundStyle(.white.opacity(baseOpacity))
+
+            if showingTranslation {
+                if let translation = lineTranslations[line.id] {
+                    Text(translation)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.white.opacity(baseOpacity * 0.65))
+                } else if isTranslating {
+                    // Placeholder shimmer while batch translation is in flight
+                    Text("···")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(baseOpacity * 0.4))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .scaleEffect(isCurrent ? 1.0 : 0.96, anchor: .leading)
+        .animation(.spring(duration: 0.35), value: isCurrent)
     }
 
     // MARK: - Full Controls Panel (artwork view)
