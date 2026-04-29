@@ -59,10 +59,11 @@ struct PlayerView: View {
             .animation(.easeInOut(duration: 0.4), value: showingTranscript)
         }
         .animation(.spring(duration: 0.35), value: showingTranscript)
-        // Use $translationConfig (binding) so the framework can invalidate/recreate
-        // the session. Capture transcript text before the async boundary to avoid
-        // actor-isolation issues and ensure we translate the right version.
-        .translationTask($translationConfig) { session in
+        // translationTask takes the value directly (no Binding overload exists).
+        // Task fires when translationConfig changes from nil → non-nil.
+        // Capture text before the async boundary; reset config to nil after so
+        // the next tap can re-trigger by setting it to a new value again.
+        .translationTask(translationConfig) { session in
             let textToTranslate = transcriptionManager.transcript
             guard !textToTranslate.isEmpty else { return }
             isTranslating = true
@@ -74,7 +75,7 @@ struct PlayerView: View {
                 translatedText = "Translation unavailable"
             }
             isTranslating = false
-            translationConfig = nil  // Reset so button can re-trigger if needed
+            translationConfig = nil  // Nil-out so setting it again next time re-fires the task
         }
         .onAppear {
             player.onTrackEnd = { playNext() }
