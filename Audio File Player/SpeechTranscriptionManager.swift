@@ -105,7 +105,7 @@ final class SpeechTranscriptionManager {
             if let lastTime {
                 try await analyzer.finalizeAndFinish(through: lastTime)
             } else {
-                try await analyzer.cancelAndFinishNow()
+                await analyzer.cancelAndFinishNow()
             }
         } catch {
             print("⚠️ Analysis error: \(error)")

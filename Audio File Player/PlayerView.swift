@@ -78,7 +78,7 @@ struct PlayerView: View {
                 }
                 let responses = try await session.translate(batch: requests)
                 var result: [UUID: String] = [:]
-                for response in responses {
+                for try await response in responses {
                     if let raw = response.clientIdentifier, let uuid = UUID(uuidString: raw) {
                         result[uuid] = response.targetText
                     }
