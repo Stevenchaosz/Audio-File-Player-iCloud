@@ -6,28 +6,26 @@ import Observation
 @MainActor
 @Observable
 final class SpeechTranscriptionManager {
+    // Lyrics-style lines with per-line timestamps for playback sync
+    var lines: [TranscriptLine] = []
+    // Flat text derived from lines — used for translation input and empty-state checks
     var transcript: String = ""
     var isTranscribing = false
     var transcriptionAvailable = false
     var authorizationStatus: SFSpeechRecognizerAuthorizationStatus = .notDetermined
-    
+
     private var recognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
-    
+
     init() {
-        // Initialize with French locale
         recognizer = SFSpeechRecognizer(locale: Locale(identifier: "fr-FR"))
         checkAvailability()
     }
-    
-    // nonisolated is required: SFSpeechRecognizer delivers this callback on a
-    // background thread via TCC. If the method is @MainActor-isolated (which it
-    // would be implicitly as a member of this class), Swift 5.9+ inserts a
-    // runtime actor check at the entry of the callback closure. That check fires
-    // the moment TCC calls the closure on a background thread — crash.
-    // Making this method nonisolated prevents Swift from inferring @MainActor
-    // on the closure. The Task { @MainActor in } then hops correctly.
+
+    // nonisolated: TCC delivers the authorization callback on a background thread.
+    // Marking this method nonisolated prevents Swift from inserting a @MainActor
+    // runtime check at the closure's entry point, which would crash on that thread.
     nonisolated func requestAuthorization() {
         SFSpeechRecognizer.requestAuthorization { [weak self] status in
             Task { @MainActor [weak self] in
@@ -36,69 +34,62 @@ final class SpeechTranscriptionManager {
             }
         }
     }
-    
+
     private func checkAvailability() {
         transcriptionAvailable = recognizer?.isAvailable ?? false
     }
-    
+
     func transcribe(audioFile: AudioFile) async {
         guard let url = audioFile.resolvedURL else {
             print("⚠️ Could not resolve URL for audio file")
             return
         }
-        
         guard authorizationStatus == .authorized else {
             print("⚠️ Speech recognition not authorized")
             requestAuthorization()
             return
         }
-        
         guard transcriptionAvailable else {
             print("⚠️ Speech recognition not available")
             return
         }
-        
-        // Cancel any ongoing transcription
+
         cancel()
-        
         isTranscribing = true
+        lines = []
         transcript = ""
-        
-        // Create recognition request
+
         recognitionRequest = SFSpeechURLRecognitionRequest(url: url)
-        
-        guard let recognitionRequest = recognitionRequest else {
+        guard let recognitionRequest else {
             print("⚠️ Unable to create recognition request")
             isTranscribing = false
             return
         }
-        
-        // Configure request.
-        // shouldReportPartialResults = true so the framework accumulates text
-        // across the entire file. We only push text to the UI when isFinal,
-        // giving batch-style behaviour without the chunk-overwrite problem.
+
+        // Partial results accumulate the full text internally; we only consume
+        // the final result so we have all segments with accurate timestamps.
         recognitionRequest.shouldReportPartialResults = true
         recognitionRequest.taskHint = .unspecified
+        // Punctuation improves sentence boundary detection for grouping into lines.
+        recognitionRequest.addsPunctuation = true
 
-        // Route through a nonisolated static helper so the callback closure is
-        // not created inside a @MainActor context — same reason as requestAuthorization.
         recognitionTask = Self.startRecognitionTask(
             recognizer: recognizer,
             request: recognitionRequest
         ) { [weak self] result, error in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+
                 if let result, result.isFinal {
-                    // Only show text when the recognizer has finalised — avoids
-                    // mid-sentence replacements and chunk-overwrite truncation.
-                    self.transcript = result.bestTranscription.formattedString
-                    print("✅ Transcription complete")
+                    let segments = result.bestTranscription.segments
+                    self.lines = Self.groupIntoLines(segments)
+                    self.transcript = self.lines.map { $0.text }.joined(separator: " ")
+                    print("✅ Transcription complete — \(self.lines.count) lines")
                     self.isTranscribing = false
                 }
                 if let error {
                     let code = (error as NSError).code
-                    // Code 1110 = no speech detected (not a real error)
-                    if code != 1110 {
+                    if code != 1110 { // 1110 = no speech detected, not a real error
                         print("⚠️ Recognition error: \(error.localizedDescription)")
                     }
                     self.isTranscribing = false
@@ -106,7 +97,7 @@ final class SpeechTranscriptionManager {
             }
         }
     }
-    
+
     func cancel() {
         recognitionTask?.cancel()
         recognitionTask = nil
@@ -115,11 +106,79 @@ final class SpeechTranscriptionManager {
     }
 
     func clearTranscript() {
+        lines = []
         transcript = ""
     }
 
-    // Static nonisolated: closures created here are not in a @MainActor context,
-    // so Swift won't insert an actor isolation check at their entry points.
+    // MARK: - Sentence grouping
+
+    // Groups per-word segments into displayable lines using three signals:
+    //   1. Sentence-ending punctuation  (. ! ?)  → always break
+    //   2. Clause punctuation           (, ; :)  + pause ≥ 0.4 s → break
+    //   3. Long pause between words              ≥ 0.9 s → break
+    //   4. Maximum words per line                ≥ 12 → break
+    // A minimum of 2 words is required before a mid-clause or max-count break
+    // to avoid orphaned single-word lines.
+    private static func groupIntoLines(_ segments: [SFTranscriptionSegment]) -> [TranscriptLine] {
+        guard !segments.isEmpty else { return [] }
+
+        var result: [TranscriptLine] = []
+        var words: [String] = []
+        var lineStart: TimeInterval = segments[0].timestamp
+        var prevEnd: TimeInterval = 0
+
+        for segment in segments {
+            let word = segment.substring
+            let wordStart = segment.timestamp
+            let wordEnd = wordStart + segment.duration
+
+            let gap = words.isEmpty ? 0.0 : wordStart - prevEnd
+            let prevWord = words.last ?? ""
+            let prevLastChar = prevWord.last
+
+            let endsWithSentence  = prevLastChar.map { ".!?".contains($0) } ?? false
+            let endsWithClause    = prevLastChar.map { ",;:".contains($0) } ?? false
+            let longPause         = gap >= 0.9
+            let clausePause       = endsWithClause && gap >= 0.4
+            let wordCount         = words.count
+
+            let shouldBreak = !words.isEmpty && (
+                endsWithSentence ||
+                (clausePause    && wordCount >= 2) ||
+                (longPause      && wordCount >= 2) ||
+                (wordCount >= 12)
+            )
+
+            if shouldBreak {
+                result.append(TranscriptLine(
+                    id: UUID(),
+                    text: words.joined(separator: " "),
+                    startTime: lineStart,
+                    endTime: prevEnd
+                ))
+                words = [word]
+                lineStart = wordStart
+            } else {
+                words.append(word)
+            }
+
+            prevEnd = wordEnd
+        }
+
+        if !words.isEmpty {
+            result.append(TranscriptLine(
+                id: UUID(),
+                text: words.joined(separator: " "),
+                startTime: lineStart,
+                endTime: prevEnd
+            ))
+        }
+
+        return result
+    }
+
+    // Static nonisolated so the callback closure isn't created in a @MainActor context,
+    // preventing Swift from inserting a main-actor isolation check at the closure entry.
     private static nonisolated func startRecognitionTask(
         recognizer: SFSpeechRecognizer?,
         request: SFSpeechRecognitionRequest,

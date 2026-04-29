@@ -21,6 +21,11 @@ struct PlayerView: View {
     private var displayTime: TimeInterval { isDragging ? dragTime : player.currentTime }
     private var remaining: TimeInterval { max(0, player.duration - displayTime) }
 
+    // The last transcript line whose startTime ≤ currentTime — drives lyric highlight + auto-scroll.
+    private var currentLineID: UUID? {
+        transcriptionManager.lines.last(where: { $0.startTime <= player.currentTime })?.id
+    }
+
     var body: some View {
         // Root VStack owns the layout — no ZStack siblings fighting for width.
         // Both backgrounds live in .background so they never affect content sizing.
@@ -326,7 +331,7 @@ struct PlayerView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                } else if transcriptionManager.transcript.isEmpty {
+                } else if transcriptionManager.lines.isEmpty {
                     // Empty state
                     VStack(spacing: 12) {
                         Image(systemName: "text.quote")
@@ -363,31 +368,29 @@ struct PlayerView: View {
                     .padding(.horizontal, 24)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                } else {
-                    // Full transcript — rendered once, completely, in a scroll view
-                    let displayText = showingTranslation
-                        ? (isTranslating ? "Translating…" : translatedText)
-                        : transcriptionManager.transcript
-
+                } else if showingTranslation {
+                    // Translation: plain scrollable text (no timestamp sync)
                     ScrollView(.vertical, showsIndicators: false) {
-                        Text(displayText)
+                        Text(isTranslating ? "Translating…" : translatedText)
                             .font(.title2.weight(.semibold))
                             .foregroundStyle(.white)
                             .multilineTextAlignment(.leading)
-                            // fixedSize prevents the text from expanding horizontally
-                            // beyond its container — fixes the off-screen overflow bug
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 24)
                             .padding(.vertical, 12)
-                            .transaction { $0.animation = nil }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                } else {
+                    // Lyrics-style view: lines highlight and scroll with playback
+                    lyricsView
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
 
             // Action bar — translate / reset
-            if !transcriptionManager.transcript.isEmpty && !transcriptionManager.isTranscribing {
+            if !transcriptionManager.lines.isEmpty && !transcriptionManager.isTranscribing {
                 HStack(spacing: 12) {
                     Button {
                         if showingTranslation {
@@ -437,6 +440,50 @@ struct PlayerView: View {
                 .padding(.vertical, 14)
             }
         }
+    }
+
+    // MARK: - Lyrics View
+
+    private var lyricsView: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: 22) {
+                    ForEach(transcriptionManager.lines) { line in
+                        lyricsLine(line)
+                            .id(line.id)
+                            .onTapGesture { player.seek(to: line.startTime) }
+                    }
+                    // Extra space so the last line can scroll to center
+                    Color.clear.frame(height: 120)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 8)
+            }
+            .onChange(of: currentLineID) { _, id in
+                guard let id else { return }
+                withAnimation(.spring(duration: 0.55)) {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func lyricsLine(_ line: TranscriptLine) -> some View {
+        let isCurrent = line.id == currentLineID
+        let isPast    = !isCurrent && line.endTime < player.currentTime
+
+        Text(line.text)
+            .font(isCurrent ? .title2.weight(.bold) : .title3.weight(.regular))
+            .foregroundStyle(
+                isCurrent ? .white :
+                isPast    ? .white.opacity(0.25) :
+                            .white.opacity(0.5)
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .scaleEffect(isCurrent ? 1.0 : 0.96, anchor: .leading)
+            .animation(.spring(duration: 0.35), value: isCurrent)
     }
 
     // MARK: - Full Controls Panel (artwork view)

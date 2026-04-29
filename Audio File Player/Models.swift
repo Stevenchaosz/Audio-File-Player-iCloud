@@ -63,6 +63,13 @@ struct AudioFile: Identifiable, Codable, Hashable {
     var formattedDuration: String { formatTime(duration) }
 }
 
+struct TranscriptLine: Identifiable, Equatable {
+    let id: UUID
+    let text: String
+    let startTime: TimeInterval
+    let endTime: TimeInterval
+}
+
 func formatTime(_ seconds: TimeInterval) -> String {
     guard seconds.isFinite, !seconds.isNaN, seconds >= 0 else { return "0:00" }
     let total = Int(seconds)
