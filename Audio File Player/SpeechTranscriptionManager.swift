@@ -73,15 +73,13 @@ final class SpeechTranscriptionManager {
             return
         }
         
-        // Configure request
-        recognitionRequest.shouldReportPartialResults = false
+        // Configure request.
+        // shouldReportPartialResults = true so the framework accumulates text
+        // across the entire file. We only push text to the UI when isFinal,
+        // giving batch-style behaviour without the chunk-overwrite problem.
+        recognitionRequest.shouldReportPartialResults = true
         recognitionRequest.taskHint = .unspecified
-        
-        // Use on-device recognition if available (iOS 13+)
-        if recognizer?.supportsOnDeviceRecognition ?? false {
-            recognitionRequest.requiresOnDeviceRecognition = true
-        }
-        
+
         // Route through a nonisolated static helper so the callback closure is
         // not created inside a @MainActor context — same reason as requestAuthorization.
         recognitionTask = Self.startRecognitionTask(
@@ -90,15 +88,19 @@ final class SpeechTranscriptionManager {
         ) { [weak self] result, error in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if let result {
+                if let result, result.isFinal {
+                    // Only show text when the recognizer has finalised — avoids
+                    // mid-sentence replacements and chunk-overwrite truncation.
                     self.transcript = result.bestTranscription.formattedString
-                    if result.isFinal {
-                        print("✅ Transcription complete")
-                        self.isTranscribing = false
-                    }
+                    print("✅ Transcription complete")
+                    self.isTranscribing = false
                 }
                 if let error {
-                    print("⚠️ Recognition error: \(error.localizedDescription)")
+                    let code = (error as NSError).code
+                    // Code 1110 = no speech detected (not a real error)
+                    if code != 1110 {
+                        print("⚠️ Recognition error: \(error.localizedDescription)")
+                    }
                     self.isTranscribing = false
                 }
             }

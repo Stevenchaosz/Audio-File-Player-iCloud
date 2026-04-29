@@ -22,38 +22,41 @@ struct PlayerView: View {
     private var remaining: TimeInterval { max(0, player.duration - displayTime) }
 
     var body: some View {
-        ZStack {
-            // Base gradient — always visible
-            background
+        // Root VStack owns the layout — no ZStack siblings fighting for width.
+        // Both backgrounds live in .background so they never affect content sizing.
+        VStack(spacing: 0) {
+            navBar
+                .padding(.horizontal, 24)
+                .padding(.top, 8)
+                .padding(.bottom, 20)
 
-            // Full-screen mosaic overlay when transcript is open (Apple Music style)
             if showingTranscript {
-                mosaicBackground
-                    .ignoresSafeArea()
-                    .transition(.opacity.animation(.easeInOut(duration: 0.4)))
+                transcriptContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity.animation(.easeInOut(duration: 0.3)))
+            } else {
+                artwork
+                    .padding(.horizontal, 36)
+                    .padding(.bottom, 32)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                Spacer(minLength: 0)
             }
 
-            VStack(spacing: 0) {
-                navBar
-                    .padding(.horizontal, 24)
-                    .padding(.top, 8)
-                    .padding(.bottom, 20)
-
+            controlsPanel
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            // Backgrounds are decorative — keeping them out of the layout tree
+            // prevents ignoresSafeArea from distorting content VStack widths.
+            ZStack {
+                background
                 if showingTranscript {
-                    transcriptContent
-                        .frame(maxHeight: .infinity)
-                        .transition(.opacity.animation(.easeInOut(duration: 0.3)))
-                } else {
-                    artwork
-                        .padding(.horizontal, 36)
-                        .padding(.bottom, 32)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    Spacer(minLength: 0)
-                    
+                    mosaicBackground
+                        .transition(.opacity.animation(.easeInOut(duration: 0.4)))
                 }
-
-                controlsPanel
             }
+            .ignoresSafeArea()
+            .animation(.easeInOut(duration: 0.4), value: showingTranscript)
         }
         .animation(.spring(duration: 0.35), value: showingTranscript)
         .translationTask(translationConfig) { session in
