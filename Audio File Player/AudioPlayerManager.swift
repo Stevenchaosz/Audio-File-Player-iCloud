@@ -1,11 +1,9 @@
 import Foundation
 import AVFoundation
 import Combine
+import MediaPlayer
 
-// ObservableObject + @Published has no actor-isolation runtime assertions.
-// @MainActor @Observable generates dispatch_assert_queue checks that conflict
-// with AVFoundation's background callbacks even with every bridging technique.
-final class AudioPlayerManager: ObservableObject {
+final class AudioPlayerManager: ObservableObject, @unchecked Sendable {
     @Published var currentFile: AudioFile?
     @Published var isPlaying = false
     @Published var currentTime: TimeInterval = 0
@@ -14,6 +12,8 @@ final class AudioPlayerManager: ObservableObject {
     @Published var currentIndex: Int = -1
 
     var onTrackEnd: (() -> Void)?
+    var onNext: (() -> Void)?
+    var onPrevious: (() -> Void)?
     let speedOptions: [Float] = [0.25, 0.5, 1.0, 1.5, 2.0]
 
     private var player: AVPlayer?
@@ -21,6 +21,7 @@ final class AudioPlayerManager: ObservableObject {
     private var itemObserver: NSKeyValueObservation?
     private var endObserver: NSObjectProtocol?
     private var securityScopedURL: URL?
+    private var remoteCommandsRegistered = false
 
     func load(file: AudioFile, index: Int) {
         guard let url = file.resolvedURL else {
@@ -57,8 +58,12 @@ final class AudioPlayerManager: ObservableObject {
         duration = 0
         isPlaying = true
 
-        // KVO fires on an arbitrary thread — dispatch to main before touching @Published state.
-        // With ObservableObject there are no actor assertions; DispatchQueue.main.async is enough.
+        setupNowPlaying(file: file)
+        if !remoteCommandsRegistered {
+            setupRemoteCommands()
+            remoteCommandsRegistered = true
+        }
+
         itemObserver = item.observe(\.status, options: [.new]) { [weak self] observedItem, _ in
             let status = observedItem.status
             let dur = CMTimeGetSeconds(observedItem.duration)
@@ -72,6 +77,7 @@ final class AudioPlayerManager: ObservableObject {
                     return
                 }
                 self.duration = dur.isFinite ? dur : 0
+                self.updateNowPlayingDuration()
                 if self.isPlaying {
                     self.player?.play()
                     self.player?.rate = self.playbackSpeed
@@ -79,10 +85,10 @@ final class AudioPlayerManager: ObservableObject {
             }
         }
 
-        // Already on .main — update @Published directly, no wrapping needed.
-        let interval = CMTime(seconds: 0.1, preferredTimescale: 600)
+        let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
         timeObserver = player?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             self?.currentTime = CMTimeGetSeconds(time)
+            self?.updateNowPlayingTime()
         }
 
         endObserver = NotificationCenter.default.addObserver(
@@ -91,6 +97,7 @@ final class AudioPlayerManager: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             self?.isPlaying = false
+            self?.updateNowPlayingPlaybackState()
             self?.onTrackEnd?()
         }
     }
@@ -104,6 +111,7 @@ final class AudioPlayerManager: ObservableObject {
             player?.rate = playbackSpeed
             isPlaying = true
         }
+        updateNowPlayingPlaybackState()
     }
 
     func seek(to time: TimeInterval) {
@@ -111,6 +119,7 @@ final class AudioPlayerManager: ObservableObject {
         let cmTime = CMTime(seconds: clamped, preferredTimescale: 600)
         player?.seek(to: cmTime, toleranceBefore: .zero, toleranceAfter: .zero)
         currentTime = clamped
+        updateNowPlayingTime()
     }
 
     func skip(_ seconds: TimeInterval) {
@@ -122,7 +131,100 @@ final class AudioPlayerManager: ObservableObject {
         if isPlaying {
             player?.rate = speed
         }
+        updateNowPlayingPlaybackState()
     }
+
+    // MARK: - Lock Screen / Now Playing
+
+    private func setupNowPlaying(file: AudioFile) {
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: file.displayName,
+            MPMediaItemPropertyArtist: "Audio File Player",
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: 0,
+            MPNowPlayingInfoPropertyPlaybackRate: 1.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
+            MPMediaItemPropertyPlaybackDuration: 0
+        ]
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func updateNowPlayingDuration() {
+        guard var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+        info[MPMediaItemPropertyPlaybackDuration] = duration
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func updateNowPlayingTime() {
+        guard var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
+        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(playbackSpeed) : 0.0
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func updateNowPlayingPlaybackState() {
+        guard var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
+        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(playbackSpeed) : 0.0
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func setupRemoteCommands() {
+        let center = MPRemoteCommandCenter.shared()
+
+        center.playCommand.isEnabled = true
+        center.playCommand.addTarget { [weak self] _ in
+            DispatchQueue.main.async { @Sendable [self] in self?.togglePlayPause() }
+            return .success
+        }
+
+        center.pauseCommand.isEnabled = true
+        center.pauseCommand.addTarget { [weak self] _ in
+            DispatchQueue.main.async { @Sendable [self] in self?.togglePlayPause() }
+            return .success
+        }
+
+        center.togglePlayPauseCommand.isEnabled = true
+        center.togglePlayPauseCommand.addTarget { [weak self] _ in
+            DispatchQueue.main.async { @Sendable [self] in self?.togglePlayPause() }
+            return .success
+        }
+
+        center.skipForwardCommand.isEnabled = true
+        center.skipForwardCommand.preferredIntervals = [15]
+        center.skipForwardCommand.addTarget { [weak self] _ in
+            DispatchQueue.main.async { @Sendable [self] in self?.skip(15) }
+            return .success
+        }
+
+        center.skipBackwardCommand.isEnabled = true
+        center.skipBackwardCommand.preferredIntervals = [15]
+        center.skipBackwardCommand.addTarget { [weak self] _ in
+            DispatchQueue.main.async { @Sendable [self] in self?.skip(-15) }
+            return .success
+        }
+
+        center.changePlaybackPositionCommand.isEnabled = true
+        center.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let e = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            let position = e.positionTime
+            DispatchQueue.main.async { @Sendable [self, position] in self?.seek(to: position) }
+            return .success
+        }
+
+        center.nextTrackCommand.isEnabled = true
+        center.nextTrackCommand.addTarget { [weak self] _ in
+            DispatchQueue.main.async { @Sendable [self] in self?.onNext?() }
+            return .success
+        }
+
+        center.previousTrackCommand.isEnabled = true
+        center.previousTrackCommand.addTarget { [weak self] _ in
+            DispatchQueue.main.async { @Sendable [self] in self?.onPrevious?() }
+            return .success
+        }
+    }
+
+    // MARK: - Cleanup
 
     private func cleanup() {
         if let observer = timeObserver {
