@@ -175,7 +175,17 @@ struct PlayerView: View {
 
     private var navBar: some View {
         HStack {
-            Button { dismiss() } label: {
+            // Closes transcript if open, otherwise closes the player
+            Button {
+                if showingTranscript {
+                    withAnimation(.spring(duration: 0.35)) {
+                        showingTranscript = false
+                        showingTranslation = false
+                    }
+                } else {
+                    dismiss()
+                }
+            } label: {
                 Image(systemName: "chevron.down")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.white)
@@ -196,8 +206,10 @@ struct PlayerView: View {
             Spacer()
 
             Button {
-                showingTranscript.toggle()
-                if !showingTranscript { showingTranslation = false }
+                withAnimation(.spring(duration: 0.35)) {
+                    showingTranscript.toggle()
+                    if !showingTranscript { showingTranslation = false }
+                }
             } label: {
                 Image(systemName: showingTranscript ? "text.quote.rtl" : "text.quote")
                     .font(.title3.weight(.semibold))
@@ -230,157 +242,173 @@ struct PlayerView: View {
         .shadow(color: .black.opacity(0.5), radius: 40, y: 16)
     }
 
-    // MARK: - Transcript Content (full-height, Apple Music style)
+    // MARK: - Transcript Content (full-height, Apple Music lyrics style)
 
     private var transcriptContent: some View {
-        let displayText = showingTranslation
-            ? (isTranslating ? "Translating…" : (translatedText.isEmpty ? "" : translatedText))
-            : transcriptionManager.transcript
-
-        return ZStack(alignment: .bottom) {
-            if transcriptionManager.transcript.isEmpty {
-                emptyTranscriptPlaceholder
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    Text(displayText)
-                        .font(.title2.weight(.medium))
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 28)
-                        .padding(.top, 8)
-                        .padding(.bottom, 100)
-                        // Kill every implicit animation on text changes — stops the flash
-                        .transaction { $0.animation = nil }
+        VStack(spacing: 0) {
+            // Track header — mirroring Apple Music's compact header inside the lyrics view
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(.white.opacity(0.12))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "music.note")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.75))
                 }
-                // Pins the scroll viewport to the bottom as content grows.
-                // Eliminates the onChange+scrollTo pattern that caused the
-                // "multiple updates per frame" warning during rapid transcription.
-                .defaultScrollAnchor(.bottom)
-            }
-
-            // Floating action bar — fade bottom edge, sit action buttons over it
-            VStack(spacing: 0) {
-                LinearGradient(
-                    colors: [.clear, .black.opacity(0.7)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 56)
-                .allowsHitTesting(false)
-
-                transcriptActionBar
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 12)
-                    .background(.black.opacity(0.35))
-            }
-        }
-    }
-
-    private var emptyTranscriptPlaceholder: some View {
-        VStack(spacing: 12) {
-            Image(systemName: transcriptionManager.isTranscribing ? "waveform" : "text.quote")
-                .font(.system(size: 48, weight: .light))
-                .foregroundStyle(.white.opacity(0.6))
-                .symbolEffect(.variableColor.iterative.reversing, isActive: transcriptionManager.isTranscribing)
-
-            if transcriptionManager.isTranscribing {
-                Text("Transcribing…")
-                    .font(.headline)
-                    .foregroundStyle(.white.opacity(0.8))
-            } else if transcriptionManager.authorizationStatus != .authorized {
-                Text("Speech Recognition Access Required")
-                    .font(.headline)
-                    .foregroundStyle(.white.opacity(0.8))
-                Text("Tap below to enable")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.6))
-            } else {
-                Text("No Transcript Yet")
-                    .font(.headline)
-                    .foregroundStyle(.white.opacity(0.8))
-                Text("Tap below to transcribe")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.6))
-            }
-
-            if !transcriptionManager.isTranscribing {
-                Button {
-                    if let file = player.currentFile {
-                        Task { await transcriptionManager.transcribe(audioFile: file) }
-                    }
-                } label: {
-                    Label(
-                        transcriptionManager.authorizationStatus == .authorized
-                            ? "Generate Transcript"
-                            : "Enable Speech Recognition",
-                        systemImage: "waveform.and.mic"
-                    )
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                    .background(.white.opacity(0.2), in: Capsule())
-                    .overlay(Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 1))
-                }
-                .padding(.top, 8)
-            }
-        }
-        .padding()
-    }
-
-    private var transcriptActionBar: some View {
-        HStack(spacing: 10) {
-            // Translate / Original toggle
-            if !transcriptionManager.transcript.isEmpty {
-                Button {
-                    if showingTranslation {
-                        showingTranslation = false
-                    } else {
-                        if translatedText.isEmpty {
-                            translationConfig = TranslationSession.Configuration(
-                                source: Locale.Language(identifier: "fr"),
-                                target: Locale.Language(identifier: "en")
-                            )
-                        }
-                        showingTranslation = true
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        if isTranslating {
-                            ProgressView().scaleEffect(0.75).tint(.white)
-                        } else {
-                            Image(systemName: showingTranslation ? "globe" : "translate")
-                                .font(.subheadline.weight(.semibold))
-                        }
-                        Text(showingTranslation ? "Original" : "Translate")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .background(showingTranslation ? .white.opacity(0.3) : .white.opacity(0.15), in: Capsule())
-                    .overlay(Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 1))
-                }
-            }
-
-            Spacer()
-
-            // Reset
-            if !transcriptionManager.isTranscribing && !transcriptionManager.transcript.isEmpty {
-                Button {
-                    transcriptionManager.clearTranscript()
-                    showingTranslation = false
-                    translatedText = ""
-                    translationConfig = nil
-                } label: {
-                    Image(systemName: "arrow.counterclockwise")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(player.currentFile?.displayName ?? "Unknown")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.7))
-                        .frame(width: 36, height: 36)
-                        .background(.white.opacity(0.12), in: Circle())
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text("Transcript")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.5))
                 }
+                Spacer()
+                // Explicit close-transcript button so it's always visible
+                Button {
+                    withAnimation(.spring(duration: 0.35)) {
+                        showingTranscript = false
+                        showingTranslation = false
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .frame(width: 30, height: 30)
+                        .background(.white.opacity(0.15), in: Circle())
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 16)
+
+            // Main area — transcribing spinner / empty state / scrollable text
+            Group {
+                if transcriptionManager.isTranscribing {
+                    // Batch transcription in progress — show a spinner, no partial text
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .tint(.white)
+                        Text("Transcribing full audio…")
+                            .font(.headline)
+                            .foregroundStyle(.white.opacity(0.85))
+                        Text("This may take a moment")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.5))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                } else if transcriptionManager.transcript.isEmpty {
+                    // Empty state
+                    VStack(spacing: 12) {
+                        Image(systemName: "text.quote")
+                            .font(.system(size: 44, weight: .light))
+                            .foregroundStyle(.white.opacity(0.5))
+                        Text("No Transcript Yet")
+                            .font(.headline)
+                            .foregroundStyle(.white.opacity(0.8))
+                        Text(transcriptionManager.authorizationStatus == .authorized
+                             ? "Tap below to transcribe"
+                             : "Speech recognition access required")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.55))
+                            .multilineTextAlignment(.center)
+                        Button {
+                            if let file = player.currentFile {
+                                Task { await transcriptionManager.transcribe(audioFile: file) }
+                            }
+                        } label: {
+                            Label(
+                                transcriptionManager.authorizationStatus == .authorized
+                                    ? "Generate Transcript"
+                                    : "Enable Speech Recognition",
+                                systemImage: "waveform.and.mic"
+                            )
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 22)
+                            .padding(.vertical, 12)
+                            .background(.white.opacity(0.2), in: Capsule())
+                        }
+                        .padding(.top, 6)
+                    }
+                    .padding(.horizontal, 24)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                } else {
+                    // Full transcript — rendered once, completely, in a scroll view
+                    let displayText = showingTranslation
+                        ? (isTranslating ? "Translating…" : translatedText)
+                        : transcriptionManager.transcript
+
+                    ScrollView(.vertical, showsIndicators: false) {
+                        Text(displayText)
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .multilineTextAlignment(.leading)
+                            // fixedSize prevents the text from expanding horizontally
+                            // beyond its container — fixes the off-screen overflow bug
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 12)
+                            .transaction { $0.animation = nil }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+
+            // Action bar — translate / reset
+            if !transcriptionManager.transcript.isEmpty && !transcriptionManager.isTranscribing {
+                HStack(spacing: 12) {
+                    Button {
+                        if showingTranslation {
+                            showingTranslation = false
+                        } else {
+                            if translatedText.isEmpty {
+                                translationConfig = TranslationSession.Configuration(
+                                    source: Locale.Language(identifier: "fr"),
+                                    target: Locale.Language(identifier: "en")
+                                )
+                            }
+                            showingTranslation = true
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if isTranslating {
+                                ProgressView().scaleEffect(0.75).tint(.white)
+                            } else {
+                                Image(systemName: showingTranslation ? "globe" : "translate")
+                            }
+                            Text(showingTranslation ? "Original" : "Translate")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(showingTranslation ? .white.opacity(0.3) : .white.opacity(0.15), in: Capsule())
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.2), lineWidth: 1))
+                    }
+
+                    Spacer()
+
+                    Button {
+                        transcriptionManager.clearTranscript()
+                        showingTranslation = false
+                        translatedText = ""
+                        translationConfig = nil
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .frame(width: 36, height: 36)
+                            .background(.white.opacity(0.12), in: Circle())
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 14)
             }
         }
     }

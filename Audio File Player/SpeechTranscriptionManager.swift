@@ -74,7 +74,7 @@ final class SpeechTranscriptionManager {
         }
         
         // Configure request
-        recognitionRequest.shouldReportPartialResults = true
+        recognitionRequest.shouldReportPartialResults = false
         recognitionRequest.taskHint = .unspecified
         
         // Use on-device recognition if available (iOS 13+)
