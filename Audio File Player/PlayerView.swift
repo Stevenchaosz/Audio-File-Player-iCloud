@@ -86,7 +86,6 @@ struct PlayerView: View {
             player.onTrackEnd = { playNext() }
             player.onNext = { playNext() }
             player.onPrevious = { playPrevious() }
-            transcriptionManager.requestAuthorization()
         }
         .onChange(of: player.currentFile?.id) {
             withAnimation(.spring(duration: 0.4)) { artworkScale = 0.9 }
@@ -340,9 +339,9 @@ struct PlayerView: View {
                         Text("No Transcript Yet")
                             .font(.headline)
                             .foregroundStyle(.white.opacity(0.8))
-                        Text(transcriptionManager.authorizationStatus == .authorized
+                        Text(transcriptionManager.isAvailable
                              ? "Tap below to transcribe"
-                             : "Speech recognition access required")
+                             : "Not available on this device")
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.55))
                             .multilineTextAlignment(.center)
@@ -351,18 +350,14 @@ struct PlayerView: View {
                                 Task { await transcriptionManager.transcribe(audioFile: file) }
                             }
                         } label: {
-                            Label(
-                                transcriptionManager.authorizationStatus == .authorized
-                                    ? "Generate Transcript"
-                                    : "Enable Speech Recognition",
-                                systemImage: "waveform.and.mic"
-                            )
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 22)
-                            .padding(.vertical, 12)
-                            .background(.white.opacity(0.2), in: Capsule())
+                            Label("Generate Transcript", systemImage: "waveform.and.mic")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 22)
+                                .padding(.vertical, 12)
+                                .background(.white.opacity(0.2), in: Capsule())
                         }
+                        .disabled(!transcriptionManager.isAvailable)
                         .padding(.top, 6)
                     }
                     .padding(.horizontal, 24)

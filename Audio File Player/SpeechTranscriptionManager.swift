@@ -3,54 +3,31 @@ import Speech
 import AVFoundation
 import Observation
 
+// Uses iOS 26 SpeechAnalyzer + SpeechTranscriber APIs:
+//   - analyzeSequence(from: AVAudioFile) — no manual request/callback wiring
+//   - ResultAttributeOption.audioTimeRange — per-phrase CMTimeRange on the
+//     result's AttributedString, eliminating our heuristic sentence-grouping
+//   - Results are phrase-level (Apple's model does the sentence breaking)
+//   - final actor SpeechAnalyzer — no nonisolated workarounds needed
+
 @MainActor
 @Observable
 final class SpeechTranscriptionManager {
-    // Lyrics-style lines with per-line timestamps for playback sync
     var lines: [TranscriptLine] = []
-    // Flat text derived from lines — used for translation input and empty-state checks
     var transcript: String = ""
     var isTranscribing = false
-    var transcriptionAvailable = false
-    var authorizationStatus: SFSpeechRecognizerAuthorizationStatus = .notDetermined
 
-    private var recognizer: SFSpeechRecognizer?
-    private var recognitionRequest: SFSpeechRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
+    var isAvailable: Bool { SpeechTranscriber.isAvailable }
 
-    init() {
-        recognizer = SFSpeechRecognizer(locale: Locale(identifier: "fr-FR"))
-        checkAvailability()
-    }
-
-    // nonisolated: TCC delivers the authorization callback on a background thread.
-    // Marking this method nonisolated prevents Swift from inserting a @MainActor
-    // runtime check at the closure's entry point, which would crash on that thread.
-    nonisolated func requestAuthorization() {
-        SFSpeechRecognizer.requestAuthorization { [weak self] status in
-            Task { @MainActor [weak self] in
-                self?.authorizationStatus = status
-                self?.checkAvailability()
-            }
-        }
-    }
-
-    private func checkAvailability() {
-        transcriptionAvailable = recognizer?.isAvailable ?? false
-    }
+    private var currentTask: Task<Void, Never>?
 
     func transcribe(audioFile: AudioFile) async {
         guard let url = audioFile.resolvedURL else {
             print("⚠️ Could not resolve URL for audio file")
             return
         }
-        guard authorizationStatus == .authorized else {
-            print("⚠️ Speech recognition not authorized")
-            requestAuthorization()
-            return
-        }
-        guard transcriptionAvailable else {
-            print("⚠️ Speech recognition not available")
+        guard SpeechTranscriber.isAvailable else {
+            print("⚠️ SpeechTranscriber not available on this device")
             return
         }
 
@@ -59,49 +36,14 @@ final class SpeechTranscriptionManager {
         lines = []
         transcript = ""
 
-        recognitionRequest = SFSpeechURLRecognitionRequest(url: url)
-        guard let recognitionRequest else {
-            print("⚠️ Unable to create recognition request")
-            isTranscribing = false
-            return
-        }
-
-        // Partial results accumulate the full text internally; we only consume
-        // the final result so we have all segments with accurate timestamps.
-        recognitionRequest.shouldReportPartialResults = true
-        recognitionRequest.taskHint = .unspecified
-        // Punctuation improves sentence boundary detection for grouping into lines.
-        recognitionRequest.addsPunctuation = true
-
-        recognitionTask = Self.startRecognitionTask(
-            recognizer: recognizer,
-            request: recognitionRequest
-        ) { [weak self] result, error in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-
-                if let result, result.isFinal {
-                    let segments = result.bestTranscription.segments
-                    self.lines = Self.groupIntoLines(segments)
-                    self.transcript = self.lines.map { $0.text }.joined(separator: " ")
-                    print("✅ Transcription complete — \(self.lines.count) lines")
-                    self.isTranscribing = false
-                }
-                if let error {
-                    let code = (error as NSError).code
-                    if code != 1110 { // 1110 = no speech detected, not a real error
-                        print("⚠️ Recognition error: \(error.localizedDescription)")
-                    }
-                    self.isTranscribing = false
-                }
-            }
+        currentTask = Task { [weak self] in
+            await self?.runTranscription(url: url)
         }
     }
 
     func cancel() {
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        recognitionRequest = nil
+        currentTask?.cancel()
+        currentTask = nil
         isTranscribing = false
     }
 
@@ -110,80 +52,112 @@ final class SpeechTranscriptionManager {
         transcript = ""
     }
 
-    // MARK: - Sentence grouping
+    // MARK: - Core transcription
 
-    // Groups per-word segments into displayable lines using three signals:
-    //   1. Sentence-ending punctuation  (. ! ?)  → always break
-    //   2. Clause punctuation           (, ; :)  + pause ≥ 0.4 s → break
-    //   3. Long pause between words              ≥ 0.9 s → break
-    //   4. Maximum words per line                ≥ 12 → break
-    // A minimum of 2 words is required before a mid-clause or max-count break
-    // to avoid orphaned single-word lines.
-    private static func groupIntoLines(_ segments: [SFTranscriptionSegment]) -> [TranscriptLine] {
-        guard !segments.isEmpty else { return [] }
+    private func runTranscription(url: URL) async {
+        defer { isTranscribing = false }
 
-        var result: [TranscriptLine] = []
-        var words: [String] = []
-        var lineStart: TimeInterval = segments[0].timestamp
-        var prevEnd: TimeInterval = 0
+        // Resolve fr-FR to the nearest supported locale
+        guard let locale = await SpeechTranscriber.supportedLocale(
+            equivalentTo: Locale(identifier: "fr-FR")
+        ) else {
+            print("⚠️ fr-FR not supported by SpeechTranscriber")
+            return
+        }
 
-        for segment in segments {
-            let word = segment.substring
-            let wordStart = segment.timestamp
-            let wordEnd = wordStart + segment.duration
+        // audioTimeRange: attaches a TimeRangeAttribute (CMTimeRange) to each
+        // run in the result's AttributedString — enables lyric-sync highlighting
+        // without any heuristic timestamp guessing.
+        let transcriber = SpeechTranscriber(
+            locale: locale,
+            transcriptionOptions: [],
+            reportingOptions: [],
+            attributeOptions: [.audioTimeRange]
+        )
 
-            let gap = words.isEmpty ? 0.0 : wordStart - prevEnd
-            let prevWord = words.last ?? ""
-            let prevLastChar = prevWord.last
-
-            let endsWithSentence  = prevLastChar.map { ".!?".contains($0) } ?? false
-            let endsWithClause    = prevLastChar.map { ",;:".contains($0) } ?? false
-            let longPause         = gap >= 0.9
-            let clausePause       = endsWithClause && gap >= 0.4
-            let wordCount         = words.count
-
-            let shouldBreak = !words.isEmpty && (
-                endsWithSentence ||
-                (clausePause    && wordCount >= 2) ||
-                (longPause      && wordCount >= 2) ||
-                (wordCount >= 12)
-            )
-
-            if shouldBreak {
-                result.append(TranscriptLine(
-                    id: UUID(),
-                    text: words.joined(separator: " "),
-                    startTime: lineStart,
-                    endTime: prevEnd
-                ))
-                words = [word]
-                lineStart = wordStart
-            } else {
-                words.append(word)
+        // Download on-device model if not already installed
+        do {
+            if let request = try await AssetInventory.assetInstallationRequest(
+                supporting: [transcriber]
+            ) {
+                print("📥 Installing speech recognition model…")
+                try await request.downloadAndInstall()
             }
-
-            prevEnd = wordEnd
+        } catch {
+            print("⚠️ Asset installation error: \(error) — attempting anyway")
         }
 
-        if !words.isEmpty {
-            result.append(TranscriptLine(
-                id: UUID(),
-                text: words.joined(separator: " "),
-                startTime: lineStart,
-                endTime: prevEnd
-            ))
+        guard let avFile = try? AVAudioFile(forReading: url) else {
+            print("⚠️ Could not open audio file")
+            return
         }
 
-        return result
+        let analyzer = SpeechAnalyzer(modules: [transcriber])
+
+        // Collect phrase results concurrently with analysis.
+        // Each result from transcriber.results is already a sentence/phrase —
+        // Apple's model handles the segmentation; no manual grouping needed.
+        let resultsTask = Task { () -> [TranscriptLine] in
+            var collected: [TranscriptLine] = []
+            do {
+                for try await result in transcriber.results {
+                    guard let line = TranscriptLine(from: result) else { continue }
+                    collected.append(line)
+                }
+            } catch {
+                print("⚠️ Results stream error: \(error)")
+            }
+            return collected
+        }
+
+        // Feed the file — returns once the file has been fully read
+        do {
+            let lastTime = try await analyzer.analyzeSequence(from: avFile)
+            if let lastTime {
+                try await analyzer.finalizeAndFinish(through: lastTime)
+            } else {
+                try await analyzer.cancelAndFinishNow()
+            }
+        } catch {
+            print("⚠️ Analysis error: \(error)")
+        }
+
+        guard !Task.isCancelled else { return }
+
+        let collected = await resultsTask.value
+        print("✅ Transcription complete — \(collected.count) lines")
+        lines = collected
+        transcript = collected.map { $0.text }.joined(separator: " ")
     }
+}
 
-    // Static nonisolated so the callback closure isn't created in a @MainActor context,
-    // preventing Swift from inserting a main-actor isolation check at the closure entry.
-    private static nonisolated func startRecognitionTask(
-        recognizer: SFSpeechRecognizer?,
-        request: SFSpeechRecognitionRequest,
-        handler: @escaping (SFSpeechRecognitionResult?, Error?) -> Void
-    ) -> SFSpeechRecognitionTask? {
-        recognizer?.recognitionTask(with: request, resultHandler: handler)
+// MARK: - TranscriptLine initializer from SpeechTranscriber.Result
+
+private extension TranscriptLine {
+    // Builds a TranscriptLine from a phrase result, extracting the overall
+    // start/end time from the TimeRangeAttribute runs on the AttributedString.
+    init?(from result: SpeechTranscriber.Result) {
+        let text = String(result.text.characters)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+
+        var phraseStart: Double? = nil
+        var phraseEnd: Double = 0
+
+        for run in result.text.runs {
+            if let tr = run[SpeechTranscriber.Result.TimeRangeAttribute.self] {
+                let s = CMTimeGetSeconds(tr.start)
+                let e = CMTimeGetSeconds(CMTimeAdd(tr.start, tr.duration))
+                if phraseStart == nil || s < phraseStart! { phraseStart = s }
+                if e > phraseEnd { phraseEnd = e }
+            }
+        }
+
+        self.init(
+            id: UUID(),
+            text: text,
+            startTime: phraseStart ?? 0,
+            endTime: phraseEnd
+        )
     }
 }
