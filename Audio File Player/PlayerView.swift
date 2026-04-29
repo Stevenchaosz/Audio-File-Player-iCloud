@@ -34,15 +34,15 @@ struct PlayerView: View {
                 transcriptContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(.opacity.animation(.easeInOut(duration: 0.3)))
+                miniControlsPanel
             } else {
                 artwork
                     .padding(.horizontal, 36)
                     .padding(.bottom, 32)
                     .transition(.move(edge: .top).combined(with: .opacity))
                 Spacer(minLength: 0)
+                controlsPanel
             }
-
-            controlsPanel
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
@@ -59,15 +59,22 @@ struct PlayerView: View {
             .animation(.easeInOut(duration: 0.4), value: showingTranscript)
         }
         .animation(.spring(duration: 0.35), value: showingTranscript)
-        .translationTask(translationConfig) { session in
+        // Use $translationConfig (binding) so the framework can invalidate/recreate
+        // the session. Capture transcript text before the async boundary to avoid
+        // actor-isolation issues and ensure we translate the right version.
+        .translationTask($translationConfig) { session in
+            let textToTranslate = transcriptionManager.transcript
+            guard !textToTranslate.isEmpty else { return }
+            isTranslating = true
             do {
-                isTranslating = true
-                let response = try await session.translate(transcriptionManager.transcript)
-                translatedText = response.targetText
+                let response = try await session.translate(textToTranslate)
+                translatedText = response.targetText.isEmpty ? "Translation unavailable" : response.targetText
             } catch {
                 print("Translation error: \(error)")
+                translatedText = "Translation unavailable"
             }
             isTranslating = false
+            translationConfig = nil  // Reset so button can re-trigger if needed
         }
         .onAppear {
             player.onTrackEnd = { playNext() }
@@ -416,25 +423,21 @@ struct PlayerView: View {
         }
     }
 
-    // MARK: - Controls Panel
+    // MARK: - Full Controls Panel (artwork view)
 
     private var controlsPanel: some View {
         VStack(spacing: 0) {
-            trackInfo
-                .padding(.horizontal, 28)
-                .padding(.top, 28)
-                .padding(.bottom, 24)
-
             scrubber
                 .padding(.horizontal, 28)
-                .padding(.bottom, 28)
+                .padding(.top, 24)
+                .padding(.bottom, 24)
 
             transportControls
                 .padding(.horizontal, 20)
-                .padding(.bottom, 24)
+                .padding(.bottom, 20)
 
-            speedSelector
-                .padding(.horizontal, 20)
+            // Speed as a popup menu — shows current speed, tap to pick another
+            speedMenu
                 .padding(.bottom, 40)
         }
         .background {
@@ -448,21 +451,106 @@ struct PlayerView: View {
         }
     }
 
-    // MARK: - Track Info
+    // MARK: - Mini Controls Panel (transcript view)
 
-    private var trackInfo: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(player.currentFile?.displayName ?? "No Track Selected")
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                Text("Audio File")
-                    .font(.subheadline)
+    private var miniControlsPanel: some View {
+        VStack(spacing: 10) {
+            // Scrubber with timestamps
+            miniScrubber
+                .padding(.horizontal, 24)
+
+            // All transport buttons, slightly smaller
+            HStack(spacing: 0) {
+                TrackButton(icon: "backward.end.fill", size: .medium) { playPrevious() }
+                Spacer()
+                SkipButton(seconds: -15, longPressSeconds: -30, player: player)
+                Spacer()
+                miniPlayPauseButton
+                Spacer()
+                SkipButton(seconds: 15, longPressSeconds: 30, player: player)
+                Spacer()
+                TrackButton(icon: "forward.end.fill", size: .medium) { playNext() }
+            }
+            .padding(.horizontal, 24)
+
+            speedMenu
+                .padding(.bottom, 20)
+        }
+        .padding(.top, 14)
+        .background {
+            UnevenRoundedRectangle(topLeadingRadius: 24, topTrailingRadius: 24)
+                .fill(.ultraThinMaterial)
+                .overlay(alignment: .top) {
+                    UnevenRoundedRectangle(topLeadingRadius: 24, topTrailingRadius: 24)
+                        .strokeBorder(.white.opacity(0.15), lineWidth: 1)
+                }
+                .ignoresSafeArea(edges: .bottom)
+        }
+    }
+
+    private var miniScrubber: some View {
+        VStack(spacing: 4) {
+            Slider(
+                value: Binding(get: { displayTime }, set: { v in dragTime = v; isDragging = true }),
+                in: 0...max(player.duration, 1)
+            ) { editing in
+                if !editing { player.seek(to: dragTime); isDragging = false }
+            }
+            .tint(.white)
+            HStack {
+                Text(formatTime(displayTime))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("-" + formatTime(remaining))
+                    .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            Spacer()
+        }
+    }
+
+    private var miniPlayPauseButton: some View {
+        Button { player.togglePlayPause() } label: {
+            ZStack {
+                Circle()
+                    .fill(.white)
+                    .frame(width: 56, height: 56)
+                    .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(.black)
+                    .offset(x: player.isPlaying ? 0 : 2)
+                    .contentTransition(.symbolEffect(.replace))
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Speed Menu (popup picker)
+
+    private var speedMenu: some View {
+        Menu {
+            ForEach(player.speedOptions, id: \.self) { speed in
+                Button {
+                    withAnimation(.spring(duration: 0.25)) { player.setSpeed(speed) }
+                } label: {
+                    Label(labelFor(speed), systemImage: player.playbackSpeed == speed ? "checkmark" : "")
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "gauge.with.dots.needle.67percent")
+                    .font(.caption.weight(.semibold))
+                Text(labelFor(player.playbackSpeed))
+                    .font(.subheadline.weight(.semibold))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2.weight(.bold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(.white.opacity(0.15), in: Capsule())
+            .overlay(Capsule().strokeBorder(.white.opacity(0.2), lineWidth: 1))
         }
     }
 
@@ -524,34 +612,6 @@ struct PlayerView: View {
             }
         }
         .buttonStyle(.plain)
-    }
-
-    // MARK: - Speed Selector
-
-    private var speedSelector: some View {
-        HStack(spacing: 6) {
-            ForEach(player.speedOptions, id: \.self) { speed in
-                Button {
-                    withAnimation(.spring(duration: 0.25)) { player.setSpeed(speed) }
-                } label: {
-                    Text(labelFor(speed))
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
-                        .frame(maxWidth: .infinity)
-                        .background {
-                            if player.playbackSpeed == speed {
-                                Capsule().fill(.white.opacity(0.25))
-                                    .overlay { Capsule().strokeBorder(.white.opacity(0.3), lineWidth: 1) }
-                            } else {
-                                Capsule().fill(.white.opacity(0.06))
-                            }
-                        }
-                        .foregroundStyle(player.playbackSpeed == speed ? .primary : .secondary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
     }
 
     // MARK: - Helpers
