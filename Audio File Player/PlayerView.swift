@@ -1,6 +1,6 @@
 import SwiftUI
 import UIKit
-import Translation
+@preconcurrency import Translation
 
 struct PlayerView: View {
     @EnvironmentObject private var player: AudioPlayerManager
